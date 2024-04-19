@@ -1,0 +1,1246 @@
+<!doctype html>
+<html class="no-js" lang="en">
+
+<head>
+    {% load static %}
+    <meta charset="utf-8">
+    <meta http-equiv="x-ua-compatible" content="ie=edge">
+    <title>DRL-HVAC WebTrainer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="shortcut icon" type="image/png" href="{% static "/images/icon/favicon.ico">
+    <link rel="stylesheet" href="{% static "/css/bootstrap.min.css" %}">
+    <link rel="stylesheet" href="{% static "/css/font-awesome.min.css" %}">
+    <link rel="stylesheet" href="{% static "/css/themify-icons.css" %}">
+    <link rel="stylesheet" href="{% static "/css/metisMenu.css" %}">
+    <link rel="stylesheet" href="{% static "/css/owl.carousel.min.css" %}">
+    <link rel="stylesheet" href="{% static "/css/slicknav.min.css" %}">
+    <!-- amchart css -->
+    <link rel="stylesheet" href="https://www.amcharts.com/lib/3/plugins/export/export.css" type="text/css" media="all" />
+    <!-- others css -->
+    <link rel="stylesheet" href="{% static "/css/typography.css" %}">
+    <link rel="stylesheet" href="{% static "/css/default-css.css" %}">
+    <link rel="stylesheet" href="{% static "/css/styles.css" %}">
+    <link rel="stylesheet" href="{% static "/css/responsive.css" %}">
+    <!-- modernizr css -->
+    <script src="{% static "/js/vendor/modernizr-2.8.3.min.js" %}"></script>
+     <!-- jquery latest version -->
+    <script src="{% static "/js/vendor/jquery-3.3.1.min.js" %}"></script>
+    <script src="{% static "/js/vendor/jquery-ui-1.12.1.min.js" %}"></script>
+    <script src="https://code.highcharts.com/highcharts.js"></script>
+    <script src="https://code.highcharts.com/modules/exporting.js"></script>
+
+    <script type="text/javascript">
+        var all_workers = [];
+        var all_workers_ips = [];
+        var all_workers_ports = [];
+        var project_selector;
+        var debug;
+        var computer_status_html = `<div class="single-report mb-xs-30">
+                                <div class="s-report-inner pr--20 pt--30 mb-3">
+                                    <div class="icon"><i class="fa fa-cloud"></i></div>
+                                    <div class="s-report-title d-flex justify-content-between">
+                                        <h4 class="header-title mb-0" id="computer_computerindex_ip"></h4>
+                                        <p>Refresh every 5s</p>
+
+                                    </div>
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <h4>CPU Usage:</h4>
+                                        <h4 id="computer_computerindex_cpu">--%</h4>
+                                    </div>
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <h4>Memory Usage:</h4>
+                                        <h4 id="computer_computerindex_mem">--%</h4>
+                                    </div>
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <h4>Free Disk Space:</h4>
+                                        <h4 id="computer_computerindex_dsk">--GB</h4>
+                                    </div>
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <h4>Running/Queuing:</h4>
+                                        <h4 id="computer_computerindex_run">--</h4>
+                                    </div>
+                                    <div class="d-flex justify-content-between pb-2">
+                                        <h6>Updated (UTC):</h6>
+                                        <h6 id="computer_computerindex_time">--</h6>
+                                    </div>
+                                </div>
+                            </div>
+                            `
+
+        $(document).ready(function(){
+        // Read all workers
+        var ct_i = 1;
+        {%for available_computer in available_computers%}
+            [ip, port] = "{{ available_computer }}".split(":");
+            all_workers.push("{{ available_computer }}")
+            all_workers_ips.push(ip);
+            all_workers_ports.push(port);
+            // Create the div for computer status
+            var status_div = document.createElement("div");
+            status_div.className = "col-md-4";
+            status_div.innerHTML = computer_status_html.replace(/computerindex/g, ct_i)
+            document.getElementById('computer_status').appendChild(status_div);
+            ct_i += 1;
+        {%endfor%}
+        // Set the project selector
+        project_selector = document.getElementById("project_select");
+        var counter = 0;
+        {%for run_name in run_dirs_names%}
+            var project_run_opn = document.createElement("option");
+            project_run_opn.text = "{{ run_name }}";
+            project_run_opn.value = "{{ run_name }}"
+            project_selector.add(project_run_opn);
+            if (counter == 0){
+                project_selector_func_helper(project_run_opn.text)
+            }
+            counter = counter + 1;
+        {%endfor%}
+
+        // Set the computer status view
+        for (var i=0; i<all_workers_ips.length; i++){
+            document.getElementById('computer_' + (i+1) + '_ip').innerText = all_workers_ips[i]
+            update_computer_worker_status('computer_' + (i+1)
+                                        , all_workers_ips[i], all_workers_ports[i])
+
+        }
+        // Set current time
+        set_current_time_utc();
+        });
+
+        // Repeated function
+        window.setInterval(function(){
+            // Get worker computers status
+            for (var i=0; i<all_workers_ips.length; i++){
+                update_computer_worker_status('computer_' + (i+1)
+                                        , all_workers_ips[i], all_workers_ports[i])
+            }
+            // Update the exps status
+            update_exps_status(project_selector.options[project_selector.selectedIndex]
+                                .getAttribute("value"))
+            // Update current time in UTC
+            set_current_time_utc();
+
+        }, 5000);
+
+    function set_current_time_utc(){
+        $.get("get_server_time_utc/", function(data, status){
+        document.getElementById('current_time_utc').innerText = 'Server Time (UTC): ' + data;
+        })
+    }
+
+    function update_exps_status(run_name){
+        $.get("get_exp_status/?run_name="+run_name, function(data, status){
+                var status = data;
+                var exp_ids = Object.keys(status);
+                for (var exp_i=0; exp_i<exp_ids.length; exp_i++){
+                    var this_exp_id = exp_ids[exp_i];
+                    var this_exp_statuses = status[this_exp_id];
+                    var this_exp_status = document.getElementById(this_exp_id+":status");
+                    var this_exp_machine = document.getElementById(this_exp_id+":machine:select")
+                    var this_exp_step = document.getElementById(this_exp_id+":step");
+                    // Update status
+                    if (this_exp_statuses["status"] == null){
+                        if (this_exp_status.innerText != "None"){
+                            this_exp_status.innerText = "None";
+                        }
+                    }else{
+                        if (this_exp_status.innerText != String(this_exp_statuses["status"])){
+                            this_exp_status.innerText = String(this_exp_statuses["status"]);
+                            // Change text color
+                            if (this_exp_status.innerText == 'running'){
+                                this_exp_status.style.color = 'orangered'
+                            }else if(this_exp_status.innerText == 'queuing'){
+                                this_exp_status.style.color = 'mediumvioletred'
+                            }else if(this_exp_status.innerText == 'complete'){
+                                this_exp_status.style.color = 'mediumseagreen'
+                            }else if(this_exp_status.innerText == 'None'){
+                                this_exp_status.style.color = 'black'
+                            }
+
+                        }
+                    }      
+                    //var this_exp_machine_sts = this_exp_statuses["machine"];
+                    //if (this_exp_machine_sts == null){
+                    //    this_exp_machine.selectedIndex = 0;
+                    //}else{
+                    //    this_exp_machine.selectedIndex = (all_workers_ips
+                    //                .indexOf(this_exp_statuses["machine"]) + 1);
+                    //}
+                    if (this_exp_statuses["step"] == null){
+                        if (this_exp_step.innerText != "None"){
+                            this_exp_step.innerText = "None";
+                        }
+                    }else{
+                        if (this_exp_step.innerText != String(this_exp_statuses["step"])){
+                            this_exp_step.innerText = String(this_exp_statuses["step"]);
+                        }
+                    }
+                }
+            });
+    }
+
+    
+    function update_computer_worker_status(div_id, ip, port){
+        $.get("get_worker_status/?ip="+ip+"&port="+port, function(data, status){
+                var status = data;
+                document.getElementById(div_id + "_cpu").innerText = status.cpu+' %'
+                document.getElementById(div_id + "_mem").innerText = status.mem+' %'
+                document.getElementById(div_id + "_dsk").innerText = status.dsk+' GB'
+                if (status.dsk < 30.0){
+                    document.getElementById(div_id + "_dsk").style.color = 'red'
+                }else{
+                    document.getElementById(div_id + "_dsk").style.color = 'green'
+                }
+                document.getElementById(div_id + "_run").innerText = status.running_queuing
+                document.getElementById(div_id + "_time").innerText = status.time;
+                // Update the local meta files
+            });
+
+    } 
+
+    function project_selector_func(select){
+        var select_value = select.options[select.selectedIndex].getAttribute("value")
+        project_selector_func_helper(select_value)
+    }
+
+    function run_button_click(){
+        var this_btn_prj_id = this.value;
+        var this_row_mch_slt = document.getElementById(this_btn_prj_id + ":machine:select")
+        var this_row_mch_val = this_row_mch_slt.options[this_row_mch_slt.selectedIndex].getAttribute("value")
+        $.get("run_exp/?id="+this_btn_prj_id+"&ip="+this_row_mch_val, function(data, status){
+            if (data=="Successful"){
+                this_row_status_id = this_btn_prj_id+":status";
+                document.getElementById(this_row_status_id).innerText = "starting";
+                // Set the button to disabled
+                document.getElementById(this_btn_prj_id+":action:button").disabled = true;
+                // Set the selector disabled
+                this_row_mch_slt.disabled = true;
+            }else{
+                alert(data)
+            }
+        });
+    }
+
+    function reset_button_click(){
+        var this_btn_prj_id = this.value;
+        console.log(this_btn_prj_id)
+        $.get("reset_exp/?id="+this_btn_prj_id, function(data, status){
+            if (data=="Successful"){
+                project_selector_func_helper(this_btn_prj_id.split(":")[0]);
+                alert("Reset " + this_btn_prj_id + " successfully");
+            }else{
+                alert(data)
+            }
+        });
+    }
+
+    function project_selector_func_helper(select_value){
+        document.getElementById('project_select_status').innerText = 'Loading...';
+        $.get("get_all_exp/?run_name=" + select_value, function(data, status){
+                document.getElementById('project_table_div').innerHTML = data;
+                var table = document.getElementById('project_table_div').getElementsByTagName('table')[0]
+                table.classList.remove('dataframe')
+                table.classList.add('dbkit-table')
+                // Add button and machine selector to table
+                var tb_rows = table.tBodies[0].rows;
+                for (var i=0; i<tb_rows.length; i++){
+                    var tb_row_i = tb_rows[i];
+                    // Delete and recreate the cell id
+                    var tb_rows_i_id_value = tb_row_i.cells[0].innerHTML;
+                    tb_row_i.deleteCell(0);
+                    var id_cell = tb_row_i.insertCell(0);
+                    id_cell.innerHTML = tb_rows_i_id_value;
+                    // Status col
+                    var tb_row_i_sts = tb_row_i.cells[2]
+                    // Create a button
+                    var tb_row_i_act = tb_row_i.cells[1];
+                    var button_i_run = document.createElement("button")
+                    button_i_run.innerText = "run";
+                    button_i_run.id = tb_row_i.id + ':action:button';
+                    button_i_run.value = tb_row_i.id
+                    button_i_run.addEventListener("click", run_button_click)
+                    if (tb_row_i_sts.innerText != "None"){
+                        button_i_run.disabled = true;
+                    } 
+                    var button_i_reset = document.createElement("button")
+                    button_i_reset.innerText = "reset";
+                    button_i_reset.id = tb_row_i.id + ':action:button:reset';
+                    button_i_reset.value = tb_row_i.id
+                    button_i_reset.addEventListener("click", reset_button_click)
+                    // Add button as child
+                    tb_row_i_act.innerText = "";
+                    tb_row_i_act.appendChild(button_i_run);
+                    tb_row_i_act.appendChild(button_i_reset)
+                    // Add checkbox
+                    var checkbox_i = document.createElement('input');
+                    checkbox_i.type = "checkbox";
+                    checkbox_i.id = tb_row_i.id + ':action:checkbox';
+                    if (tb_row_i_sts.innerText != "complete"){
+                        checkbox_i.disabled = true;
+                    }
+                    // Add checkbox as child
+                    tb_row_i_act.appendChild(checkbox_i);
+                    // Create a dropdown list
+                    var tb_row_i_mch = tb_row_i.cells[3]
+                    var mch_select = document.createElement("select")
+                    mch_select.id = tb_row_i.id + ':machine:select';
+                    // Add a none option
+                    var mch_none_opn = document.createElement("option");
+                    mch_none_opn.text = "";
+                    mch_none_opn.value = "";
+                    mch_select.add(mch_none_opn);
+                    for (var j=0; j<all_workers_ips.length; j++){
+                        var mch_i_opn = document.createElement("option");
+                        var mch_i_ip = all_workers_ips[j]
+                        mch_i_opn.text = mch_i_ip
+                        mch_i_opn.value = mch_i_ip
+                        mch_select.add(mch_i_opn);
+                    }
+                    // Set selection
+                    if (tb_row_i_mch.innerText != "None"){
+                        mch_select.selectedIndex = all_workers_ips.indexOf(tb_row_i_mch.innerText) + 1;
+                        mch_select.disabled = true
+                    } 
+                    // Add select as child
+                    tb_row_i_mch.innerText = "";
+                    tb_row_i_mch.appendChild(mch_select);
+                    // Register text change effect on the steps
+                    var this_row_step = document.getElementById(tb_row_i.id+":step");
+                    this_row_step.setAttribute('id', tb_row_i.id+":step:outer")
+                    var this_row_step_div = document.createElement('div')
+                    this_row_step_div.setAttribute("id", tb_row_i.id+":step");
+                    this_row_step.innerHTML = '';
+                    this_row_step.appendChild(this_row_step_div);
+                    var step_highlight_effect = function(mutationsList, observer) {
+                        for(var mutation of mutationsList) {
+                            if (mutation.type == 'childList') {
+                                var tb_row_i_id_array = mutation.target.id.split(':');
+                                $("#"+tb_row_i_id_array[0]+"\\:"+tb_row_i_id_array[1]+"\\:step").effect( "highlight", {color:"#FF0000"}, 500);
+                            }
+                        }
+                    }
+                    var this_row_step_obs = new MutationObserver(step_highlight_effect);
+                    var this_row_step_obs_config = { attributes: true, childList: true, subtree: true };
+                    this_row_step_obs.observe(this_row_step, this_row_step_obs_config);
+                    // Register text change effect on the status
+                    var this_row_status = document.getElementById(tb_row_i.id+":status");
+                    var status_highlight_effect = function(mutationsList, observer) {
+                        for(var mutation of mutationsList) {
+                            if (mutation.type == 'childList') {
+                                var tb_row_i_id_array = mutation.target.id.split(':');
+                                $("#"+tb_row_i_id_array[0]+"\\:"+tb_row_i_id_array[1]+"\\:status").effect( "highlight", {color:"#FF0000"}, 500);
+                            }
+                        }
+                    }
+                    var this_row_status_obs = new MutationObserver(status_highlight_effect);
+                    var this_row_status_obs_config = { attributes: true, childList: true, subtree: true };
+                    this_row_status_obs.observe(this_row_status, this_row_status_obs_config);
+                    // Change status text color
+                    if (this_row_status.innerText == 'running'){
+                        this_row_status.style.color = 'orangered'
+                    }else if(this_row_status.innerText == 'queuing'){
+                        this_row_status.style.color = 'mediumvioletred'
+                    }else if(this_row_status.innerText == 'complete'){
+                        this_row_status.style.color = 'mediumseagreen'
+                    }else if(this_row_status.innerText == 'None'){
+                        this_row_status.style.color = 'black'
+                    }
+
+                }
+                // Table head styles
+                // Remove the exp_id row in thead generated by the dataframe
+                table.tHead.deleteRow(1)
+                // Remoeve the thead and reconstruct the thead using the common row
+                var org_head_row_cells = table.tHead.rows[0].cells;
+                var new_head_row = table.tBodies[0].insertRow(0);
+                for (var i=0; i<org_head_row_cells.length; i++){
+                    var cell_i = org_head_row_cells[i];
+                    var new_head_cell_i = document.createElement('td');
+                    new_head_cell_i.innerHTML = cell_i.innerHTML;
+                    if (i==0){
+                        new_head_cell_i.innerHTML = 'ID';
+                    }
+                    new_head_row.appendChild(new_head_cell_i);
+                }
+                table.deleteTHead()
+                new_head_row.classList.add('heading-td')
+                // Add style class to all cols in the table
+                all_cols_td = table.getElementsByTagName('td');
+                for (var i=0; i<all_cols_td.length; i++){
+                    var col_i = all_cols_td[i];
+                    col_i.classList.add('mv-icon');
+                }
+                all_cols_th = table.getElementsByTagName('th');
+                for (var i=0; i<all_cols_th.length; i++){
+                    var col_i = all_cols_th[i];
+                    col_i.classList.add('mv-icon');
+                }
+                document.getElementById('project_select_status').innerText = '';
+            });
+        
+
+    }
+
+    function show_eval_hist(){
+        var checked_list = [];
+        var tb_rows = (document.getElementById('project_table_div')
+            .getElementsByTagName('table')[0].tBodies[0].rows)
+        for (var i=1; i<tb_rows.length; i++){
+            var this_exp_id = tb_rows[i].id;
+            this_exp_check_id = this_exp_id + ':action:checkbox';
+            if (document.getElementById(this_exp_check_id).checked == true){
+                checked_list.push(this_exp_id);
+            }
+        }
+        // Show chart
+        var request_url = 'get_eval_res_hist/?col=1';
+        for (var i=0; i<checked_list.length; i++){
+            request_url += "&exp" + (i+1) + "=" + checked_list[i];
+        }
+        $.getJSON(request_url, function (data, status) {
+                srsForChart = [];
+                Object.keys(data).forEach(function(key) {
+                    srsForChart.push({name: key, 
+                        data:data[key], 
+                        lineWidth:4,
+                        marker:{
+                            radius:4
+                        }})
+                })
+                console.log(srsForChart)
+
+                Highcharts.chart('eval_res_hist_chart', {
+                    chart: {
+                        zoomType: 'x'
+                    },
+                    title: {
+                        text: 'Evaluation History'
+                    },
+                    subtitle: {
+                        text: document.ontouchstart === undefined ?
+                                'Click and drag in the plot area to zoom in' : 'Pinch the chart to zoom in'
+                    },
+                    xAxis: {
+                        type: 'int',
+                        tickInterval: 500000, 
+                        tickWidth: 0,
+                        gridLineWidth: 1,
+                        labels: {
+                            align: 'left',
+                            x: 3,
+                            y: -3
+                        }
+                        
+                    },
+                    yAxis: {
+                        title: {
+                            text: 'Value'
+                        }
+                    },
+                    legend: {
+                        enabled: true
+                    },
+                    labels: {
+                        align: 'right',
+                        x: -3,
+                        y: 16,
+                        format: '{value:.,0f}'
+                    },
+                    plotOptions: {
+                        area: {
+                            fillColor: {
+                                linearGradient: {
+                                    x1: 0,
+                                    y1: 0,
+                                    x2: 0,
+                                    y2: 1
+                                },
+                                stops: [
+                                    [0, Highcharts.getOptions().colors[0]],
+                                    [1, Highcharts.Color(Highcharts.getOptions().colors[0]).setOpacity(0).get('rgba')]
+                                ]
+                            },
+                            marker: {
+                                radius: 2
+                            },
+                            lineWidth: 1,
+                            states: {
+                                hover: {
+                                    lineWidth: 1
+                                }
+                            },
+                            threshold: null
+                        }
+                    },
+
+                    series: srsForChart
+                });
+            });
+
+    }
+
+    function add_action_button(){
+
+    }
+
+    </script>
+</head>
+
+<body>
+    
+    <!--[if lt IE 8]>
+            <p class="browserupgrade">You are using an <strong>outdated</strong> browser. Please <a href="http://browsehappy.com/">upgrade your browser</a> to improve your experience.</p>
+        <![endif]-->
+    <!-- preloader area start -->
+    <div id="preloader">
+        <div class="loader"></div>
+    </div>
+    <!-- preloader area end -->
+    <!-- page container area start -->
+    <div class="page-container">
+        <!-- sidebar menu area start -->
+        {% include "interface_v1/html/srtdash/common_side_bar.html" %}
+        <!-- sidebar menu area end -->
+        <!-- main content area start -->
+        <div class="main-content">
+            <!-- header area start -->
+            <div class="header-area">
+                <div class="row align-items-center">
+                    <!-- nav and search button -->
+                    <div class="col-md-6 col-sm-8 clearfix">
+                        <div class="nav-btn pull-left">
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                        </div>
+                        <div class="search-box pull-left">
+                            <form action="#">
+                                <input type="text" name="search" placeholder="Search..." required>
+                                <i class="ti-search"></i>
+                            </form>
+                        </div>
+                    </div>
+                    <!-- profile info & task notification -->
+                    <div class="col-md-6 col-sm-4 clearfix">
+                        <ul class="notification-area pull-right">
+                            <li id="full-view"><i class="ti-fullscreen"></i></li>
+                            <li id="full-view-exit"><i class="ti-zoom-out"></i></li>
+                            <li class="dropdown">
+                                <i class="ti-bell dropdown-toggle" data-toggle="dropdown">
+                                    <span>2</span>
+                                </i>
+                                <div class="dropdown-menu bell-notify-box notify-box">
+                                    <span class="notify-title">You have 3 new notifications <a href="#">view all</a></span>
+                                    <div class="nofity-list">
+                                        <a href="#" class="notify-item">
+                                            <div class="notify-thumb"><i class="ti-key btn-danger"></i></div>
+                                            <div class="notify-text">
+                                                <p>You have Changed Your Password</p>
+                                                <span>Just Now</span>
+                                            </div>
+                                        </a>
+                                        <a href="#" class="notify-item">
+                                            <div class="notify-thumb"><i class="ti-comments-smiley btn-info"></i></div>
+                                            <div class="notify-text">
+                                                <p>New Commetns On Post</p>
+                                                <span>30 Seconds ago</span>
+                                            </div>
+                                        </a>
+                                        <a href="#" class="notify-item">
+                                            <div class="notify-thumb"><i class="ti-key btn-primary"></i></div>
+                                            <div class="notify-text">
+                                                <p>Some special like you</p>
+                                                <span>Just Now</span>
+                                            </div>
+                                        </a>
+                                        <a href="#" class="notify-item">
+                                            <div class="notify-thumb"><i class="ti-comments-smiley btn-info"></i></div>
+                                            <div class="notify-text">
+                                                <p>New Commetns On Post</p>
+                                                <span>30 Seconds ago</span>
+                                            </div>
+                                        </a>
+                                        <a href="#" class="notify-item">
+                                            <div class="notify-thumb"><i class="ti-key btn-primary"></i></div>
+                                            <div class="notify-text">
+                                                <p>Some special like you</p>
+                                                <span>Just Now</span>
+                                            </div>
+                                        </a>
+                                        <a href="#" class="notify-item">
+                                            <div class="notify-thumb"><i class="ti-key btn-danger"></i></div>
+                                            <div class="notify-text">
+                                                <p>You have Changed Your Password</p>
+                                                <span>Just Now</span>
+                                            </div>
+                                        </a>
+                                        <a href="#" class="notify-item">
+                                            <div class="notify-thumb"><i class="ti-key btn-danger"></i></div>
+                                            <div class="notify-text">
+                                                <p>You have Changed Your Password</p>
+                                                <span>Just Now</span>
+                                            </div>
+                                        </a>
+                                    </div>
+                                </div>
+                            </li>
+                            <li class="dropdown">
+                                <i class="fa fa-envelope-o dropdown-toggle" data-toggle="dropdown"><span>3</span></i>
+                                <div class="dropdown-menu notify-box nt-enveloper-box">
+                                    <span class="notify-title">You have 3 new notifications <a href="#">view all</a></span>
+                                    <div class="nofity-list">
+                                        <a href="#" class="notify-item">
+                                            <div class="notify-thumb">
+                                                <img src="{% static "/images/author/author-img1.jpg" alt="image">
+                                            </div>
+                                            <div class="notify-text">
+                                                <p>Aglae Mayer</p>
+                                                <span class="msg">Hey I am waiting for you...</span>
+                                                <span>3:15 PM</span>
+                                            </div>
+                                        </a>
+                                        <a href="#" class="notify-item">
+                                            <div class="notify-thumb">
+                                                <img src="{% static "/images/author/author-img2.jpg" alt="image">
+                                            </div>
+                                            <div class="notify-text">
+                                                <p>Aglae Mayer</p>
+                                                <span class="msg">When you can connect with me...</span>
+                                                <span>3:15 PM</span>
+                                            </div>
+                                        </a>
+                                        <a href="#" class="notify-item">
+                                            <div class="notify-thumb">
+                                                <img src="{% static "/images/author/author-img3.jpg" alt="image">
+                                            </div>
+                                            <div class="notify-text">
+                                                <p>Aglae Mayer</p>
+                                                <span class="msg">I missed you so much...</span>
+                                                <span>3:15 PM</span>
+                                            </div>
+                                        </a>
+                                        <a href="#" class="notify-item">
+                                            <div class="notify-thumb">
+                                                <img src="{% static "/images/author/author-img4.jpg" alt="image">
+                                            </div>
+                                            <div class="notify-text">
+                                                <p>Aglae Mayer</p>
+                                                <span class="msg">Your product is completely Ready...</span>
+                                                <span>3:15 PM</span>
+                                            </div>
+                                        </a>
+                                        <a href="#" class="notify-item">
+                                            <div class="notify-thumb">
+                                                <img src="{% static "/images/author/author-img2.jpg" alt="image">
+                                            </div>
+                                            <div class="notify-text">
+                                                <p>Aglae Mayer</p>
+                                                <span class="msg">Hey I am waiting for you...</span>
+                                                <span>3:15 PM</span>
+                                            </div>
+                                        </a>
+                                        <a href="#" class="notify-item">
+                                            <div class="notify-thumb">
+                                                <img src="{% static "/images/author/author-img1.jpg" alt="image">
+                                            </div>
+                                            <div class="notify-text">
+                                                <p>Aglae Mayer</p>
+                                                <span class="msg">Hey I am waiting for you...</span>
+                                                <span>3:15 PM</span>
+                                            </div>
+                                        </a>
+                                        <a href="#" class="notify-item">
+                                            <div class="notify-thumb">
+                                                <img src="{% static "/images/author/author-img3.jpg" alt="image">
+                                            </div>
+                                            <div class="notify-text">
+                                                <p>Aglae Mayer</p>
+                                                <span class="msg">Hey I am waiting for you...</span>
+                                                <span>3:15 PM</span>
+                                            </div>
+                                        </a>
+                                    </div>
+                                </div>
+                            </li>
+                            <li class="settings-btn">
+                                <i class="ti-settings"></i>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <!-- header area end -->
+            <!-- page title area start -->
+            <div class="page-title-area">
+                <div class="row align-items-center">
+                    <div class="col-sm-6">
+                        <div class="breadcrumbs-area clearfix">
+                            <h4 class="page-title pull-left">Dashboard</h4>
+                            <ul class="breadcrumbs pull-left">
+                                <li><a href="index.html">Home</a></li>
+                                <li><span>Dashboard</span></li>
+                            </ul>
+                        </div>
+                    </div>
+                
+                </div>
+            </div>
+            <!-- page title area end -->
+            <!-- page title area start -->
+            <div class="page-title-area">
+                <div class="row align-items-center">
+                    <div class="col-sm-6">
+                        <div class="breadcrumbs-area clearfix">
+                            <h6 id='current_time_utc'>--</h6>
+                        </div>
+                    </div>
+                
+                </div>
+            </div>
+            <!-- page title area end -->
+            <div class="main-content-inner">
+                <!-- worker computer status -->
+                <div class="sales-report-area mt-5 mb-5">
+                    <div class="row" id="computer_status">
+                        
+                    </div>
+                </div>
+                <!-- project overview -->
+                <div class="row mt-5 mb-5">
+                    <div class="col-12">
+                        <div class="card">
+                            <div class="card-body">
+                                <div class="d-sm-flex justify-content-between align-items-center">
+                                    <h4 class="header-title mb-0">Project Overview</h4>
+                                    
+                                    <select class="custome-select border-0 pr-3" id="project_select", onchange="project_selector_func(this)">
+                                    </select>
+                                </div>
+                                <div id="project_select_status">loading...</div>
+                                <div class="market-status-table mt-4">
+                                    <div class="table-responsive" id="project_table_div" style="height: 600px;">
+
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- sales report area start -->
+
+                <!-- sales report area end -->
+                <!-- eval_res_hist start -->
+                <div class="row">
+                    <div class="col-xl-9 col-lg-8">
+                        <div class="card">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <h4 class="header-title mb-0">Evaluation Results History</h4>
+                                    <button id="eval_button" onclick="show_eval_hist()">Show Evaluation Hisotry</button>
+                                </div>
+                                <div id="eval_res_hist_chart"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-xl-3 col-lg-4 coin-distribution">
+                        <div class="card h-full">
+                            <div class="card-body">
+                                <h4 class="header-title mb-0"></h4>
+                                <!--<div id="coin_distribution"></div>-->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- overview area end -->
+                <!-- market value area start -->
+                <div class="row mt-5 mb-5">
+                    <div class="col-12">
+                        <div class="card">
+                            <div class="card-body">
+                                <div class="d-sm-flex justify-content-between align-items-center">
+                                    <h4 class="header-title mb-0">Market Value And Trends</h4>
+                                    <select class="custome-select border-0 pr-3">
+                                        <option selected>Last 24 Hours</option>
+                                        <option value="0">01 July 2018</option>
+                                    </select>
+                                </div>
+                                <div class="market-status-table mt-4">
+                                    <div class="table-responsive">
+                                        <table class="dbkit-table">
+                                            <tr class="heading-td">
+                                                <td class="mv-icon">Logo</td>
+                                                <td class="coin-name">Coin Name</td>
+                                                <td class="buy">Buy</td>
+                                                <td class="sell">Sells</td>
+                                                <td class="trends">Trends</td>
+                                                <td class="attachments">Attachments</td>
+                                                <td class="stats-chart">Stats</td>
+                                            </tr>
+                                            <tr>
+                                                <td class="mv-icon"><img src="{% static "/images/icon/market-value/icon1.png" alt="icon">
+                                                </td>
+                                                <td class="coin-name">Dashcoin</td>
+                                                <td class="buy">30% <img src="{% static "/images/icon/market-value/triangle-down.png" alt="icon"></td>
+                                                <td class="sell">20% <img src="{% static "/images/icon/market-value/triangle-up.png" alt="icon"></td>
+                                                <td class="trends"><img src="{% static "/images/icon/market-value/trends-up-icon.png" alt="icon"></td>
+                                                <td class="attachments">$ 56746,857</td>
+                                                <td class="stats-chart">
+                                                    <canvas id="mvaluechart"></canvas>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td class="mv-icon">
+                                                    <div class="mv-icon"><img src="{% static "/images/icon/market-value/icon2.png" alt="icon"></div>
+                                                </td>
+                                                <td class="coin-name">LiteCoin</td>
+                                                <td class="buy">30% <img src="{% static "/images/icon/market-value/triangle-down.png" alt="icon"></td>
+                                                <td class="sell">20% <img src="{% static "/images/icon/market-value/triangle-up.png" alt="icon"></td>
+                                                <td class="trends"><img src="{% static "/images/icon/market-value/trends-down-icon.png" alt="icon"></td>
+                                                <td class="attachments">$ 56746,857</td>
+                                                <td class="stats-chart">
+                                                    <canvas id="mvaluechart2"></canvas>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td class="mv-icon">
+                                                    <div class="mv-icon"><img src="{% static "/images/icon/market-value/icon3.png" alt="icon"></div>
+                                                </td>
+                                                <td class="coin-name">Euthorium</td>
+                                                <td class="buy">30% <img src="{% static "/images/icon/market-value/triangle-down.png" alt="icon"></td>
+                                                <td class="sell">20% <img src="{% static "/images/icon/market-value/triangle-up.png" alt="icon"></td>
+                                                <td class="trends"><img src="{% static "/images/icon/market-value/trends-up-icon.png" alt="icon"></td>
+                                                <td class="attachments">$ 56746,857</td>
+                                                <td class="stats-chart">
+                                                    <canvas id="mvaluechart3"></canvas>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td class="mv-icon">
+                                                    <div class="mv-icon"><img src="{% static "/images/icon/market-value/icon4.png" alt="icon"></div>
+                                                </td>
+                                                <td class="coin-name">Bitcoindash</td>
+                                                <td class="buy">30% <img src="{% static "/images/icon/market-value/triangle-down.png" alt="icon"></td>
+                                                <td class="sell">20% <img src="{% static "/images/icon/market-value/triangle-up.png" alt="icon"></td>
+                                                <td class="trends"><img src="{% static "/images/icon/market-value/trends-up-icon.png" alt="icon"></td>
+                                                <td class="attachments">$ 56746,857</td>
+                                                <td class="stats-chart">
+                                                    <canvas id="mvaluechart4"></canvas>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- market value area end -->
+                <!-- row area start -->
+                <div class="row">
+                    <!-- Live Crypto Price area start -->
+                    <div class="col-lg-4">
+                        <div class="card">
+                            <div class="card-body">
+                                <h4 class="header-title">Live Crypto Price</h4>
+                                <div class="cripto-live mt-5">
+                                    <ul>
+                                        <li>
+                                            <div class="icon b">b</div> Bitcoin<span><i class="fa fa-long-arrow-up"></i>$876909.00</span></li>
+                                        <li>
+                                            <div class="icon l">l</div> Litecoin<span><i class="fa fa-long-arrow-up"></i>$29780.00</span></li>
+                                        <li>
+                                            <div class="icon d">d</div> Dashcoin<span><i class="fa fa-long-arrow-up"></i>$13276.00</span></li>
+                                        <li>
+                                            <div class="icon b">b</div> Bitcoindash<span><i class="fa fa-long-arrow-down"></i>$5684.890</span></li>
+                                        <li>
+                                            <div class="icon e">e</div> Euthorium<span><i class="fa fa-long-arrow-down"></i>$3890.98</span></li>
+                                        <li>
+                                            <div class="icon t">b</div> Tcoin<span><i class="fa fa-long-arrow-up"></i>$750.789</span></li>
+                                        <li>
+                                            <div class="icon b">b</div> Bitcoin<span><i class="fa fa-long-arrow-up"></i>$325.037</span></li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Live Crypto Price area end -->
+                    <!-- trading history area start -->
+                    <div class="col-lg-8 mt-sm-30 mt-xs-30">
+                        <div class="card">
+                            <div class="card-body">
+                                <div class="d-sm-flex justify-content-between align-items-center">
+                                    <h4 class="header-title">Trading History</h4>
+                                    <div class="trd-history-tabs">
+                                        <ul class="nav" role="tablist">
+                                            <li>
+                                                <a class="active" data-toggle="tab" href="#buy_order" role="tab">Buy Order</a>
+                                            </li>
+                                            <li>
+                                                <a data-toggle="tab" href="#sell_order" role="tab">Sell Order</a>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                    <select class="custome-select border-0 pr-3">
+                                        <option selected>Last 24 Hours</option>
+                                        <option value="0">01 July 2018</option>
+                                    </select>
+                                </div>
+                                <div class="trad-history mt-4">
+                                    <div class="tab-content" id="myTabContent">
+                                        <div class="tab-pane fade show active" id="buy_order" role="tabpanel">
+                                            <div class="table-responsive">
+                                                <table class="dbkit-table">
+                                                    <tr class="heading-td">
+                                                        <td>Trading ID</td>
+                                                        <td>Time</td>
+                                                        <td>Status</td>
+                                                        <td>Amount</td>
+                                                        <td>Last Trade</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>78211</td>
+                                                        <td>4.00 AM</td>
+                                                        <td>Pending</td>
+                                                        <td>$758.90</td>
+                                                        <td>$05245.090</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>782782</td>
+                                                        <td>4.00 AM</td>
+                                                        <td>Pending</td>
+                                                        <td>$77878.90</td>
+                                                        <td>$7778.090</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>89675978</td>
+                                                        <td>4.00 AM</td>
+                                                        <td>Pending</td>
+                                                        <td>$0768.90</td>
+                                                        <td>$0945.090</td>
+                                                    </tr>
+                                                </table>
+                                            </div>
+                                        </div>
+                                        <div class="tab-pane fade" id="sell_order" role="tabpanel">
+                                            <div class="table-responsive">
+                                                <table class="dbkit-table">
+                                                    <tr class="heading-td">
+                                                        <td>Trading ID</td>
+                                                        <td>Time</td>
+                                                        <td>Status</td>
+                                                        <td>Amount</td>
+                                                        <td>Last Trade</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>8964978</td>
+                                                        <td>4.00 AM</td>
+                                                        <td>Pending</td>
+                                                        <td>$445.90</td>
+                                                        <td>$094545.090</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>89675978</td>
+                                                        <td>4.00 AM</td>
+                                                        <td>Pending</td>
+                                                        <td>$78.90</td>
+                                                        <td>$074852945.090</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>78527878</td>
+                                                        <td>4.00 AM</td>
+                                                        <td>Pending</td>
+                                                        <td>$0768.90</td>
+                                                        <td>$65465.090</td>
+                                                    </tr>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- trading history area end -->
+                </div>
+                <!-- row area end -->
+                <div class="row mt-5">
+                    <!-- latest news area start -->
+                    <div class="col-xl-6">
+                        <div class="card">
+                            <div class="card-body">
+                                <h4 class="header-title">Latest News</h4>
+                                <div class="letest-news mt-5">
+                                    <div class="single-post mb-xs-40 mb-sm-40">
+                                        <div class="lts-thumb">
+                                            <img src="{% static "/images/blog/post-thumb1.jpg" alt="post thumb">
+                                        </div>
+                                        <div class="lts-content">
+                                            <span>Admin Post</span>
+                                            <h2><a href="blog.html">Sed ut perspiciatis unde omnis iste.</a></h2>
+                                            <p>There are many variations of passages of Lorem Ipsum available, but the majority have suffered alteration in some...</p>
+                                        </div>
+                                    </div>
+                                    <div class="single-post">
+                                        <div class="lts-thumb">
+                                            <img src="{% static "/images/blog/post-thumb2.jpg" alt="post thumb">
+                                        </div>
+                                        <div class="lts-content">
+                                            <span>Admin Post</span>
+                                            <h2><a href="blog.html">Sed ut perspiciatis unde omnis iste.</a></h2>
+                                            <p>There are many variations of passages of Lorem Ipsum available, but the majority have suffered alteration in some...</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- latest news area end -->
+                    <!-- exchange area start -->
+                    <div class="col-xl-6 mt-md-30 mt-xs-30 mt-sm-30">
+                        <div class="card">
+                            <div class="card-body">
+                                <h4 class="header-title">Exchange</h4>
+                                <div class="exhcange-rate mt-5">
+                                    <form action="#">
+                                        <div class="input-form">
+                                            <input type="text" value="0.76834">
+                                            <span>BTC</span>
+                                        </div>
+                                        <div class="exchange-devider">To</div>
+                                        <div class="input-form">
+                                            <input type="text" value="5689.846">
+                                            <span>USD</span>
+                                        </div>
+                                        <div class="exchange-btn">
+                                            <button type="submit">Exchange Now</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- exchange area end -->
+                </div>
+                <!-- row area start-->
+            </div>
+        </div>
+        <!-- main content area end -->
+        <!-- footer area start-->
+        <footer>
+            <div class="footer-area">
+                <p>© Copyright 2018. All right reserved. Template by <a href="https://colorlib.com/wp/">Colorlib</a>.</p>
+            </div>
+        </footer>
+        <!-- footer area end-->
+    </div>
+    <!-- page container area end -->
+    <!-- offset area start -->
+    <div class="offset-area">
+        <div class="offset-close"><i class="ti-close"></i></div>
+        <ul class="nav offset-menu-tab">
+            <li><a class="active" data-toggle="tab" href="#activity">Activity</a></li>
+            <li><a data-toggle="tab" href="#settings">Settings</a></li>
+        </ul>
+        <div class="offset-content tab-content">
+            <div id="activity" class="tab-pane fade in show active">
+                <div class="recent-activity">
+                    <div class="timeline-task">
+                        <div class="icon bg1">
+                            <i class="fa fa-envelope"></i>
+                        </div>
+                        <div class="tm-title">
+                            <h4>Rashed sent you an email</h4>
+                            <span class="time"><i class="ti-time"></i>09:35</span>
+                        </div>
+                        <p>Lorem ipsum dolor sit amet consectetur adipisicing elit. Esse distinctio itaque at.
+                        </p>
+                    </div>
+                    <div class="timeline-task">
+                        <div class="icon bg2">
+                            <i class="fa fa-check"></i>
+                        </div>
+                        <div class="tm-title">
+                            <h4>Added</h4>
+                            <span class="time"><i class="ti-time"></i>7 Minutes Ago</span>
+                        </div>
+                        <p>Lorem ipsum dolor sit amet consectetur.
+                        </p>
+                    </div>
+                    <div class="timeline-task">
+                        <div class="icon bg2">
+                            <i class="fa fa-exclamation-triangle"></i>
+                        </div>
+                        <div class="tm-title">
+                            <h4>You missed you Password!</h4>
+                            <span class="time"><i class="ti-time"></i>09:20 Am</span>
+                        </div>
+                    </div>
+                    <div class="timeline-task">
+                        <div class="icon bg3">
+                            <i class="fa fa-bomb"></i>
+                        </div>
+                        <div class="tm-title">
+                            <h4>Member waiting for you Attention</h4>
+                            <span class="time"><i class="ti-time"></i>09:35</span>
+                        </div>
+                        <p>Lorem ipsum dolor sit amet consectetur adipisicing elit. Esse distinctio itaque at.
+                        </p>
+                    </div>
+                    <div class="timeline-task">
+                        <div class="icon bg3">
+                            <i class="ti-signal"></i>
+                        </div>
+                        <div class="tm-title">
+                            <h4>You Added Kaji Patha few minutes ago</h4>
+                            <span class="time"><i class="ti-time"></i>01 minutes ago</span>
+                        </div>
+                        <p>Lorem ipsum dolor sit amet consectetur adipisicing elit. Esse distinctio itaque at.
+                        </p>
+                    </div>
+                    <div class="timeline-task">
+                        <div class="icon bg1">
+                            <i class="fa fa-envelope"></i>
+                        </div>
+                        <div class="tm-title">
+                            <h4>Ratul Hamba sent you an email</h4>
+                            <span class="time"><i class="ti-time"></i>09:35</span>
+                        </div>
+                        <p>Hello sir , where are you, i am egerly waiting for you.
+                        </p>
+                    </div>
+                    <div class="timeline-task">
+                        <div class="icon bg2">
+                            <i class="fa fa-exclamation-triangle"></i>
+                        </div>
+                        <div class="tm-title">
+                            <h4>Rashed sent you an email</h4>
+                            <span class="time"><i class="ti-time"></i>09:35</span>
+                        </div>
+                        <p>Lorem ipsum dolor sit amet consectetur adipisicing elit. Esse distinctio itaque at.
+                        </p>
+                    </div>
+                    <div class="timeline-task">
+                        <div class="icon bg2">
+                            <i class="fa fa-exclamation-triangle"></i>
+                        </div>
+                        <div class="tm-title">
+                            <h4>Rashed sent you an email</h4>
+                            <span class="time"><i class="ti-time"></i>09:35</span>
+                        </div>
+                    </div>
+                    <div class="timeline-task">
+                        <div class="icon bg3">
+                            <i class="fa fa-bomb"></i>
+                        </div>
+                        <div class="tm-title">
+                            <h4>Rashed sent you an email</h4>
+                            <span class="time"><i class="ti-time"></i>09:35</span>
+                        </div>
+                        <p>Lorem ipsum dolor sit amet consectetur adipisicing elit. Esse distinctio itaque at.
+                        </p>
+                    </div>
+                    <div class="timeline-task">
+                        <div class="icon bg3">
+                            <i class="ti-signal"></i>
+                        </div>
+                        <div class="tm-title">
+                            <h4>Rashed sent you an email</h4>
+                            <span class="time"><i class="ti-time"></i>09:35</span>
+                        </div>
+                        <p>Lorem ipsum dolor sit amet consectetur adipisicing elit. Esse distinctio itaque at.
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div id="settings" class="tab-pane fade">
+                <div class="offset-settings">
+                    <h4>General Settings</h4>
+                    <div class="settings-list">
+                        <div class="s-settings">
+                            <div class="s-sw-title">
+                                <h5>Notifications</h5>
+                                <div class="s-swtich">
+                                    <input type="checkbox" id="switch1" />
+                                    <label for="switch1">Toggle</label>
+                                </div>
+                            </div>
+                            <p>Keep it 'On' When you want to get all the notification.</p>
+                        </div>
+                        <div class="s-settings">
+                            <div class="s-sw-title">
+                                <h5>Show recent activity</h5>
+                                <div class="s-swtich">
+                                    <input type="checkbox" id="switch2" />
+                                    <label for="switch2">Toggle</label>
+                                </div>
+                            </div>
+                            <p>The for attribute is necessary to bind our custom checkbox with the input.</p>
+                        </div>
+                        <div class="s-settings">
+                            <div class="s-sw-title">
+                                <h5>Show your emails</h5>
+                                <div class="s-swtich">
+                                    <input type="checkbox" id="switch3" />
+                                    <label for="switch3">Toggle</label>
+                                </div>
+                            </div>
+                            <p>Show email so that easily find you.</p>
+                        </div>
+                        <div class="s-settings">
+                            <div class="s-sw-title">
+                                <h5>Show Task statistics</h5>
+                                <div class="s-swtich">
+                                    <input type="checkbox" id="switch4" />
+                                    <label for="switch4">Toggle</label>
+                                </div>
+                            </div>
+                            <p>The for attribute is necessary to bind our custom checkbox with the input.</p>
+                        </div>
+                        <div class="s-settings">
+                            <div class="s-sw-title">
+                                <h5>Notifications</h5>
+                                <div class="s-swtich">
+                                    <input type="checkbox" id="switch5" />
+                                    <label for="switch5">Toggle</label>
+                                </div>
+                            </div>
+                            <p>Use checkboxes when looking for yes or no answers.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- offset area end -->
+   
+    <!-- bootstrap 4 js -->
+    <script src="{% static "/js/popper.min.js" %}"></script>
+    <script src="{% static "/js/bootstrap.min.js" %}"></script>
+    <script src="{% static "/js/owl.carousel.min.js" %}"></script>
+    <script src="{% static "/js/metisMenu.min.js" %}"></script>
+    
+
+    <!-- start chart js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/2.7.2/Chart.min.js"></script>
+    <!-- start highcharts js -->
+    <script src="https://code.highcharts.com/highcharts.js"></script>
+    <!-- start zingchart js -->
+    <script src="https://cdn.zingchart.com/zingchart.min.js"></script>
+    <script>
+    zingchart.MODULESDIR = "https://cdn.zingchart.com/modules/";
+    ZC.LICENSE = ["569d52cefae586f634c54f86dc99e6a9", "ee6b7db5b51705a13dc2339db3edaf6d"];
+    </script>
+    <!-- all line chart activation -->
+    <script src="{% static "/js/line-chart.js" %}"></script>
+    <!-- all pie chart -->
+    <script src="{% static "/js/pie-chart.js" %}"></script>
+    <!-- others plugins -->
+    <script src="{% static "/js/plugins.js" %}"></script>
+    <script src="{% static "/js/scripts.js" %}"></script>
+
+    <!-- custome javascript -->
+
+
+</body>
+
+</html>

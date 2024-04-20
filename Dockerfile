@@ -7,8 +7,9 @@ WORKDIR /usr/src/app
 # Copy the requirements.txt file to the container to install Python library dependencies
 COPY requirements.txt ./
 
-# Install dependencies listed in requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# Upgrade pip and install dependencies listed in requirements.txt
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy the application source code to the container
 COPY . .
